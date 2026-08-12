@@ -1,0 +1,16 @@
+{
+  "name": "telegram-recordatorios-bot",
+  "version": "1.0.0",
+  "description": "Bot de Telegram sencillo para recordatorios programados (diarios, semanales, mensuales o puntuales)",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "node-schedule": "^2.1.1",
+    "telegraf": "^4.16.3"
+  }
+}
