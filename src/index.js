@@ -1,9 +1,11 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const { addReminder, removeReminder, getRemindersByChat } = require('./store');
+const { addReminder, removeReminder, getRemindersByChat, loadAll } = require('./store');
 const { scheduleReminder, cancelReminder, loadAllReminders } = require('./scheduler');
-const { parseTime, parseWeekday, parseDayOfMonth, parseDate } = require('./parse');
-const { loadAll } = require('./store');
+const { parseTime, parseWeekday, parseDayOfMonth, parseDate, parseInterval, todayDate } = require('./parse');
+const { formatCuando, formatReminderLine, TIPO_LABEL } = require('./format');
+const { getState, setState, clearState } = require('./wizardState');
+const { freqKeyboard, weekdayKeyboard, domKeyboard, hourKeyboard, minuteKeyboard, confirmKeyboard } = require('./keyboards');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -26,7 +28,21 @@ if (ALLOWED_CHAT_IDS.length) {
   });
 }
 
-const AYUDA = `Puedo avisarte con recordatorios programados, como una alarma. Comandos disponibles:
+const AYUDA = `Puedo avisarte con recordatorios programados, como una alarma.
+
+/nuevo
+  Crea un recordatorio paso a paso con botones (frecuencia, hora y mensaje).
+
+/recordatorios
+  Lista tus recordatorios activos con su ID.
+
+/borrar ID
+  Elimina un recordatorio por su ID.
+
+/cancelar
+  Cancela la creación de un recordatorio en curso.
+
+También puedes crear recordatorios escribiendo el comando directamente:
 
 /diario HH:MM mensaje
   Ej: /diario 08:00 Tomar la pastilla
@@ -38,13 +54,7 @@ const AYUDA = `Puedo avisarte con recordatorios programados, como una alarma. Co
   Ej: /mensual 1 10:00 Pagar el alquiler
 
 /unavez AAAA-MM-DD HH:MM mensaje
-  Ej: /unavez 2026-09-01 18:00 Cita médico
-
-/recordatorios
-  Lista tus recordatorios activos con su ID.
-
-/borrar ID
-  Elimina un recordatorio por su ID.`;
+  Ej: /unavez 2026-09-01 18:00 Cita médico`;
 
 bot.start((ctx) => {
   ctx.reply(
@@ -53,6 +63,181 @@ bot.start((ctx) => {
 });
 
 bot.command('ayuda', (ctx) => ctx.reply(AYUDA));
+
+// --- Flujo interactivo (/nuevo) ---------------------------------------
+
+const PREGUNTA_HORA = '¿A qué hora? Elige una opción o escribe la hora en formato HH:MM.';
+
+bot.command('nuevo', (ctx) => {
+  setState(ctx.chat.id, { step: 'freq', data: {} });
+  ctx.reply('¿Con qué frecuencia quieres este recordatorio?', freqKeyboard());
+});
+
+bot.command('cancelar', (ctx) => {
+  if (!getState(ctx.chat.id)) return ctx.reply('No hay ningún recordatorio en creación.');
+  clearState(ctx.chat.id);
+  ctx.reply('Creación cancelada.');
+});
+
+bot.action('f:cancel', (ctx) => {
+  clearState(ctx.chat.id);
+  ctx.editMessageText('Cancelado.');
+  return ctx.answerCbQuery();
+});
+
+bot.action('f:daily', (ctx) => {
+  setState(ctx.chat.id, { step: 'hour', data: { type: 'daily' } });
+  ctx.editMessageText(PREGUNTA_HORA, hourKeyboard());
+  return ctx.answerCbQuery();
+});
+
+bot.action('f:interval', (ctx) => {
+  setState(ctx.chat.id, { step: 'interval_days', data: { type: 'interval' } });
+  ctx.editMessageText('¿Cada cuántos días? Escribe un número entero (2 o más). Ej: 3');
+  return ctx.answerCbQuery();
+});
+
+bot.action('f:weekdays', (ctx) => {
+  setState(ctx.chat.id, { step: 'weekdays', data: { type: 'weekly', weekdays: [] } });
+  ctx.editMessageText('Elige los días (puedes marcar varios) y pulsa Continuar.', weekdayKeyboard([]));
+  return ctx.answerCbQuery();
+});
+
+bot.action('f:monthly', (ctx) => {
+  setState(ctx.chat.id, { step: 'dom', data: { type: 'monthly' } });
+  ctx.editMessageText('¿Qué día del mes?', domKeyboard());
+  return ctx.answerCbQuery();
+});
+
+bot.action('f:once', (ctx) => {
+  setState(ctx.chat.id, { step: 'once_date', data: { type: 'once' } });
+  ctx.editMessageText('¿Qué fecha? Escríbela como AAAA-MM-DD (ej. 2026-09-01).');
+  return ctx.answerCbQuery();
+});
+
+bot.action(/^wd:(\d)$/, (ctx) => {
+  const state = getState(ctx.chat.id);
+  if (!state || state.step !== 'weekdays') return ctx.answerCbQuery();
+  const day = Number(ctx.match[1]);
+  const idx = state.data.weekdays.indexOf(day);
+  if (idx === -1) state.data.weekdays.push(day);
+  else state.data.weekdays.splice(idx, 1);
+  ctx.editMessageReplyMarkup(weekdayKeyboard(state.data.weekdays).reply_markup);
+  return ctx.answerCbQuery();
+});
+
+bot.action('wd:ok', (ctx) => {
+  const state = getState(ctx.chat.id);
+  if (!state || state.step !== 'weekdays') return ctx.answerCbQuery();
+  if (!state.data.weekdays.length) return ctx.answerCbQuery('Elige al menos un día', { show_alert: true });
+  state.step = 'hour';
+  ctx.editMessageText(PREGUNTA_HORA, hourKeyboard());
+  return ctx.answerCbQuery();
+});
+
+bot.action(/^dom:(\d+)$/, (ctx) => {
+  const state = getState(ctx.chat.id);
+  if (!state || state.step !== 'dom') return ctx.answerCbQuery();
+  state.data.dayOfMonth = Number(ctx.match[1]);
+  state.step = 'hour';
+  ctx.editMessageText(PREGUNTA_HORA, hourKeyboard());
+  return ctx.answerCbQuery();
+});
+
+bot.action(/^h:(\d+)$/, (ctx) => {
+  const state = getState(ctx.chat.id);
+  if (!state || state.step !== 'hour') return ctx.answerCbQuery();
+  state.data.hour = Number(ctx.match[1]);
+  state.step = 'minute';
+  ctx.editMessageText('¿Y los minutos?', minuteKeyboard());
+  return ctx.answerCbQuery();
+});
+
+bot.action(/^mi:(\d+)$/, (ctx) => {
+  const state = getState(ctx.chat.id);
+  if (!state || state.step !== 'minute') return ctx.answerCbQuery();
+  state.data.minute = Number(ctx.match[1]);
+  state.step = 'message';
+  ctx.editMessageText('Escribe el mensaje del recordatorio.');
+  return ctx.answerCbQuery();
+});
+
+bot.action('mi:manual', (ctx) => {
+  const state = getState(ctx.chat.id);
+  if (!state || state.step !== 'minute') return ctx.answerCbQuery();
+  state.step = 'manual_time';
+  ctx.editMessageText('Escribe la hora en formato HH:MM (ej. 08:30).');
+  return ctx.answerCbQuery();
+});
+
+bot.action('c:yes', (ctx) => {
+  const state = getState(ctx.chat.id);
+  if (!state || state.step !== 'confirm') return ctx.answerCbQuery();
+  const reminder = addReminder({ chatId: ctx.chat.id, ...state.data });
+  scheduleReminder(bot, reminder);
+  clearState(ctx.chat.id);
+  ctx.editMessageText(`✅ Recordatorio creado.\n${formatReminderLine(reminder)}`);
+  return ctx.answerCbQuery();
+});
+
+bot.action('c:no', (ctx) => {
+  clearState(ctx.chat.id);
+  ctx.editMessageText('Cancelado.');
+  return ctx.answerCbQuery();
+});
+
+bot.on('text', (ctx, next) => {
+  const state = getState(ctx.chat.id);
+  const text = ctx.message.text.trim();
+  if (!state || text.startsWith('/')) return next();
+
+  if (state.step === 'interval_days') {
+    const n = parseInterval(text);
+    if (!n) return ctx.reply('Escribe un número entero de días (2 o más). Ej: 3');
+    state.data.intervalDays = n;
+    state.data.startDate = todayDate();
+    state.step = 'hour';
+    return ctx.reply(PREGUNTA_HORA, hourKeyboard());
+  }
+
+  if (state.step === 'once_date') {
+    const date = parseDate(text);
+    if (!date) return ctx.reply('Fecha no válida. Escríbela como AAAA-MM-DD. Ej: 2026-09-01');
+    state.data.date = date;
+    state.step = 'hour';
+    return ctx.reply(PREGUNTA_HORA, hourKeyboard());
+  }
+
+  if (state.step === 'hour') {
+    const time = parseTime(text);
+    if (!time) return ctx.reply('Elige una hora con los botones o escribe la hora como HH:MM.');
+    state.data.hour = time.hour;
+    state.data.minute = time.minute;
+    state.step = 'message';
+    return ctx.reply('Escribe el mensaje del recordatorio.');
+  }
+
+  if (state.step === 'manual_time') {
+    const time = parseTime(text);
+    if (!time) return ctx.reply('Hora no válida. Escríbela como HH:MM. Ej: 08:30');
+    state.data.hour = time.hour;
+    state.data.minute = time.minute;
+    state.step = 'message';
+    return ctx.reply('Escribe el mensaje del recordatorio.');
+  }
+
+  if (state.step === 'message') {
+    if (!text) return ctx.reply('El mensaje no puede estar vacío. Escribe el texto del recordatorio.');
+    state.data.message = text;
+    state.step = 'confirm';
+    const resumen = `${TIPO_LABEL[state.data.type]}: ${formatCuando(state.data)}\nMensaje: ${text}`;
+    return ctx.reply(`¿Confirmas este recordatorio?\n\n${resumen}`, confirmKeyboard());
+  }
+
+  return next();
+});
+
+// --- Comandos de texto (alternativa a /nuevo) --------------------------
 
 bot.command('diario', (ctx) => {
   const args = ctx.message.text.split(' ').slice(1);
@@ -85,7 +270,7 @@ bot.command('semanal', (ctx) => {
   const reminder = addReminder({
     chatId: ctx.chat.id,
     type: 'weekly',
-    weekday,
+    weekdays: [weekday],
     hour: time.hour,
     minute: time.minute,
     message,
@@ -136,21 +321,10 @@ bot.command('unavez', (ctx) => {
   ctx.reply(`✅ Recordatorio puntual #${reminder.id} creado para el ${args[0]} a las ${args[1]}.`);
 });
 
-const TIPO_LABEL = { daily: 'Diario', weekly: 'Semanal', monthly: 'Mensual', once: 'Puntual' };
-const DIA_NOMBRE = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-
 bot.command('recordatorios', (ctx) => {
   const reminders = getRemindersByChat(ctx.chat.id);
   if (!reminders.length) return ctx.reply('No tienes recordatorios activos.');
-  const lines = reminders.map((r) => {
-    const hora = `${String(r.hour).padStart(2, '0')}:${String(r.minute).padStart(2, '0')}`;
-    let cuando = hora;
-    if (r.type === 'weekly') cuando = `${DIA_NOMBRE[r.weekday]} ${hora}`;
-    if (r.type === 'monthly') cuando = `día ${r.dayOfMonth} ${hora}`;
-    if (r.type === 'once') cuando = `${r.date.year}-${String(r.date.month).padStart(2, '0')}-${String(r.date.day).padStart(2, '0')} ${hora}`;
-    return `#${r.id} [${TIPO_LABEL[r.type]}] ${cuando} — ${r.message}`;
-  });
-  ctx.reply(lines.join('\n'));
+  ctx.reply(reminders.map(formatReminderLine).join('\n'));
 });
 
 bot.command('borrar', (ctx) => {

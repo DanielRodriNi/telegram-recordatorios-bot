@@ -1,6 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 
+// Formatos de recordatorio soportados en data/reminders.json (todos comparten
+// chatId, hour, minute y message):
+//   { type: 'daily' }
+//   { type: 'weekly', weekdays: [0-6, ...] }        (legacy: weekday: 0-6)
+//   { type: 'interval', intervalDays, startDate: {year, month, day} }
+//   { type: 'monthly', dayOfMonth: 1-28 }
+//   { type: 'once', date: {year, month, day} }
+
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DATA_FILE = path.join(DATA_DIR, 'reminders.json');
 

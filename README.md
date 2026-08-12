@@ -1,6 +1,6 @@
 # telegram-recordatorios-bot
 
-Bot de Telegram sencillo para enviarte recordatorios programados: diarios, semanales, mensuales o puntuales. Como una alarma, pero desde tu propio bot.
+Bot de Telegram sencillo para enviarte recordatorios programados: diarios, cada X días, días concretos de la semana, mensuales o puntuales. Como una alarma, pero desde tu propio bot. Los recordatorios se crean con un flujo guiado de botones (sin sintaxis que recordar).
 
 ## 1. Crear el bot en Telegram
 
@@ -44,7 +44,35 @@ ALLOWED_CHAT_IDS=123456789
 
 Reinicia el bot para que aplique.
 
-## 3. Comandos disponibles
+## 3. Crear un recordatorio: `/nuevo`
+
+La forma recomendada de crear recordatorios es con `/nuevo`, un flujo guiado con botones, como configurar una alarma:
+
+1. **Frecuencia** — elige tocando un botón:
+   - ☀️ **Cada día**
+   - 🔁 **Cada X días** — te pide un número de días (ej. cada 3 días desde hoy)
+   - 📅 **Días concretos** — botones tipo interruptor para marcar varios días de la semana a la vez (ej. lunes, martes y jueves) y luego "Continuar ▶️"
+   - 🗓️ **Mensual** — elige el día del mes (1-28) con botones
+   - 📌 **Una vez** — escribe la fecha (`AAAA-MM-DD`)
+2. **Hora** — toca una hora y luego los minutos con botones, o escribe directamente `HH:MM` en cualquier momento de este paso.
+3. **Mensaje** — escribe el texto del recordatorio.
+4. **Confirmación** — revisa el resumen y pulsa "✅ Confirmar" (o "✖️ Cancelar").
+
+En cualquier momento del flujo puedes escribir `/cancelar` para abortar la creación en curso.
+
+## 4. Otros comandos
+
+| Comando | Ejemplo | Descripción |
+|---|---|---|
+| `/nuevo` | | Inicia el flujo guiado por botones para crear un recordatorio |
+| `/recordatorios` | | Lista tus recordatorios activos con su ID |
+| `/borrar ID` | `/borrar 3` | Elimina un recordatorio por su ID |
+| `/cancelar` | | Cancela la creación de un recordatorio en curso |
+| `/ayuda` | | Muestra la ayuda |
+
+### Modo texto (avanzado)
+
+Si prefieres escribir el comando directamente en vez de usar los botones, estos comandos siguen funcionando igual que antes:
 
 | Comando | Ejemplo | Descripción |
 |---|---|---|
@@ -52,13 +80,12 @@ Reinicia el bot para que aplique.
 | `/semanal dia HH:MM mensaje` | `/semanal lunes 09:00 Sacar la basura` | Recordatorio cada semana ese día (lunes..domingo) |
 | `/mensual DD HH:MM mensaje` | `/mensual 1 10:00 Pagar el alquiler` | Recordatorio cada mes ese día (1-28, para que exista en todos los meses) |
 | `/unavez AAAA-MM-DD HH:MM mensaje` | `/unavez 2026-09-01 18:00 Cita médico` | Recordatorio único en una fecha concreta |
-| `/recordatorios` | | Lista tus recordatorios activos con su ID |
-| `/borrar ID` | `/borrar 3` | Elimina un recordatorio por su ID |
-| `/ayuda` | | Muestra la ayuda |
+
+`/diario` y `/mensual` en modo texto no permiten elegir varios días a la vez ni "cada X días"; para eso usa `/nuevo`.
 
 Los recordatorios se guardan en `data/reminders.json` y se vuelven a programar automáticamente si reinicias el bot.
 
-## 4. Mantenerlo funcionando 24/7
+## 5. Mantenerlo funcionando 24/7
 
 El bot necesita estar corriendo continuamente para avisarte a tiempo. Opciones:
 
@@ -93,3 +120,5 @@ pm2 startup   # sigue las instrucciones para que arranque solo al reiniciar
 
 - El día del mes en `/mensual` se limita a 1-28 para que el recordatorio exista siempre, en cualquier mes (incluido febrero).
 - La zona horaria se configura una vez para todo el bot con la variable `TZ`.
+- Los recordatorios de "días concretos" pueden tener varios días de la semana marcados a la vez.
+- "Cada X días" no tiene soporte nativo en `node-schedule`, así que el bot programa una comprobación diaria a la hora elegida y compara la fecha contra el día en que se creó el recordatorio para decidir si toca avisar.
